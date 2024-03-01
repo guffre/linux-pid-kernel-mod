@@ -51,24 +51,15 @@ static int tcp_sendmsg_ent_handler(struct kretprobe_instance *ri, struct pt_regs
 {
 	printk(KERN_INFO "%s entered.\n", "tcp_sendmsg");
 	char buffer[512];
-	struct args *data;
-	data = (struct args *)ri->data;
-	struct sock *sk = (void*)regs_get_kernel_argument(regs, 0);
-	struct tcp_sock *tp = tcp_sk(sk);
-
-	if (data->arg0 == tp->write_seq)
-	{
-		return 0;
-	}
-	data->arg0 = tp->write_seq;
-
+	struct iov_iter msg_iter_backup;
 	struct msghdr *msg = (void*)regs_get_kernel_argument(regs, 1);
 	size_t size = regs_get_kernel_argument(regs, 2);
 
 	if (size < 512)
 	{
+		msg_iter_backup = msg->msg_iter;
 		_copy_from_iter(buffer, size, &(msg->msg_iter));
-		//memcpy_from_iter(&(msg->msg_iter), buffer, buffer, size);
+		msg->msg_iter = msg_iter_backup;
 		buffer[size] = '\0';
 		printk(KERN_INFO "%s [%lu]: %s\n", "tcp_sendmsg", size, buffer);
 	}
