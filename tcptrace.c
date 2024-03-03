@@ -44,9 +44,8 @@ static int tcp_v4_init_seq_ret_handler(struct kretprobe_instance *ri, struct pt_
 
 static int tcp_sendmsg_ent_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	struct iov_iter msg_iter_backup;
-	struct msghdr *msg = (void*)regs_get_kernel_argument(regs, 1);
-	size_t size = regs_get_kernel_argument(regs, 2);
+	struct msghdr *msg 	= (struct msghdr *)regs_get_kernel_argument(regs, 1);
+	size_t size 		= regs_get_kernel_argument(regs, 2);
 
 	if (msg->msg_iter.iter_type == 0) // USERBUF
 	{
@@ -96,12 +95,16 @@ static int skb_copy_datagram_iter_ent_handler(struct kretprobe_instance *ri, str
 	data->data_len = size;
 	data->msg_iter = msg_iter;
 
-	char *buffer = kmalloc(size, GFP_ATOMIC);
-	skb_copy_bits(skb, offset, buffer, size);
-	for (int i = 0; i < size; i++)
-		buffer[i] ^= 'Z';
-	skb_store_bits(skb, offset, buffer, size);
-	printk("skb_copy_datagram_iter: [%d] %s\n", size, buffer);
+	if (msg_iter->iter_type == 0) // USER_BUF
+	{
+		char *buffer = kmalloc(size, GFP_ATOMIC);
+		skb_copy_bits(skb, offset, buffer, size);
+		for (int i = 0; i < size; i++)
+			buffer[i] ^= 'Z';
+		skb_store_bits(skb, offset, buffer, size);
+		printk("skb_copy_datagram_iter: [%d] %s\n", size, buffer);
+		kfree(buffer);
+	}
 
 	return 0;
 }
