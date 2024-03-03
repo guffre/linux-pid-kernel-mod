@@ -5,6 +5,7 @@
 #include <linux/limits.h>
 #include <linux/sched.h>
 #include <net/tcp.h>
+#include <net/secure_seq.h>
 
 // Maximum number of probes
 #define MAX_PROBES 10
@@ -16,16 +17,50 @@ struct args {
 	struct msghdr *msg;
 	int data_len;
 	struct iov_iter *msg_iter;
+	__be32 saddr;
+	__be32 daddr;
+	__be16 sport;
+	__be16 dport;
 };
 
-// static int secure_tcp_seq_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
-// {
-// 	// struct args *data;
-// 	// data = (struct args *)ri->data;
-// 	unsigned int retval = regs_return_value(regs);
-// 	printk(KERN_INFO "%s returned %u\n", "secure_tcp_seq", retval);
-// 	return 0;
-// }
+// POC, obviously not real
+bool is_prime_number(u32 value)
+{
+	if ( (value %2 == 0) || (value % 3 == 0) || (value % 5 == 0) ||
+		(value %7 == 0) || (value % 11 == 0) || (value % 13 == 0))
+		{
+			return false;
+		}
+	return true;
+}
+
+static int secure_tcp_seq_ent_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	struct args *data;
+	data = (struct args *)ri->data;
+	data->saddr = (__be32)regs_get_kernel_argument(regs, 0);
+	data->daddr = (__be32)regs_get_kernel_argument(regs, 1);
+	data->sport = (__be16)regs_get_kernel_argument(regs, 2);
+	data->dport = (__be16)regs_get_kernel_argument(regs, 3);
+	return 0;
+}
+
+static int secure_tcp_seq_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	struct args *data;
+	data = (struct args *)ri->data;
+	unsigned long retval = regs_return_value(regs);
+	
+	disable_kretprobe(&(probes[0]));
+	while (!is_prime_number(retval))
+	{
+		retval = secure_tcp_seq(data->saddr, data->daddr, data->sport, data->dport);
+	}
+	regs_set_return_value(regs, retval);
+	printk(KERN_INFO "%s returned %u\n", "secure_tcp_seq", (u32)retval);
+	enable_kretprobe(&(probes[0]));
+	return 0;
+}
 
 static int tcp_connect_ent_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
@@ -131,7 +166,7 @@ static int __init kretprobe_init(void)
 	int i;
 	for (i = 0; i < MAX_PROBES; i++) { probes[i].data_size = 0; }
 	i = 0;
-	//register_probe(&probes[i++], "secure_tcp_seq", &secure_tcp_seq_ret_handler, NULL);		// Generates SEQ/ACK numbers
+	register_probe(&probes[i++], "secure_tcp_seq", &secure_tcp_seq_ret_handler, &secure_tcp_seq_ent_handler);		// Generates SEQ/ACK numbers
 	register_probe(&probes[i++], "tcp_connect", NULL, &tcp_connect_ent_handler);			// SYN
 	register_probe(&probes[i++], "tcp_v4_init_seq", &tcp_v4_init_seq_ret_handler, NULL);	// SYN-ACK
 	register_probe(&probes[i++], "tcp_sendmsg", NULL, &tcp_sendmsg_ent_handler);			// Sent data
