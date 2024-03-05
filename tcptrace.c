@@ -50,7 +50,6 @@ static int secure_tcp_seq_ret_handler(struct kretprobe_instance *ri, struct pt_r
 	struct args *data;
 	data = (struct args *)ri->data;
 	unsigned long retval = regs_return_value(regs);
-	
 	// disable_kretprobe(&(probes[0])); // Buggy on some kernels?
 	while (!is_prime_number(retval))
 	{
@@ -81,12 +80,33 @@ static int tcp_connect_ent_handler(struct kretprobe_instance *ri, struct pt_regs
 	return 0;
 }
 
+//static int tcp_v4_rcv_ent_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+static int tcp_send_ack_ent_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	struct sock *sk = (struct sock *)regs_get_kernel_argument(regs, 0);
+	printk(KERN_INFO "%s: ACK (recv): %u\n", "tcp_send_ack", (tcp_sk(sk)->rack.end_seq)-1);
+	return 0;
+}
+
+
 static int tcp_v4_init_seq_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	unsigned int retval = regs_return_value(regs);
 	printk(KERN_INFO "%s: ACK (sent): %u\n", "tcp_v4_init_seq", retval);
+	// dump_stack();
 	return 0;
 }
+
+static int tcp_make_synack_ent_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	struct request_sock* req = (struct request_sock *)regs_get_kernel_argument(regs, 2);
+	u32 seq = tcp_rsk(req)->snt_isn;
+	u32 ack_seq = tcp_rsk(req)->rcv_nxt;
+	printk(KERN_INFO "%s: SYN (????): %u\n", "tcp_make_synack", seq);
+	printk(KERN_INFO "%s: ACK (????): %u\n", "tcp_make_synack", ack_seq);
+	return 0;
+}
+
 
 static int tcp_sendmsg_ent_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
@@ -97,8 +117,8 @@ static int tcp_sendmsg_ent_handler(struct kretprobe_instance *ri, struct pt_regs
 	{
 		// Need to check if this is valid memory
 		char* membuf = msg->msg_iter.__ubuf_iovec.iov_base;
-		for (int i = 0; i < size; i++)
-			membuf[i] ^= 'Z';
+		// for (int i = 0; i < size; i++)
+		// 	membuf[i] ^= 'Z';
 		printk(KERN_INFO "membuf: %s\n", membuf);
 	}
 
@@ -150,8 +170,8 @@ static int skb_copy_datagram_iter_ent_handler(struct kretprobe_instance *ri, str
 	{
 		char *buffer = kmalloc(size, GFP_ATOMIC);
 		skb_copy_bits(skb, offset, buffer, size);
-		for (int i = 0; i < size; i++)
-			buffer[i] ^= 'Z';
+		// for (int i = 0; i < size; i++)
+		// 	buffer[i] ^= 'Z';
 		skb_store_bits(skb, offset, buffer, size);
 		printk("skb_copy_datagram_iter: [%d] %s\n", size, buffer);
 		kfree(buffer);
@@ -184,11 +204,15 @@ static int __init kretprobe_init(void)
 	for (i = 0; i < MAX_PROBES; i++) { probes[i].data_size = 0; }
 	i = 0;
 	register_probe(&probes[i++], "secure_tcp_seq", &secure_tcp_seq_ret_handler, &secure_tcp_seq_ent_handler);		// Generates SEQ/ACK numbers
-	register_probe(&probes[i++], "tcp_connect", NULL, &tcp_connect_ent_handler);			// SYN
-	register_probe(&probes[i++], "tcp_v4_init_seq", &tcp_v4_init_seq_ret_handler, NULL);	// SYN-ACK
-	register_probe(&probes[i++], "tcp_sendmsg", NULL, &tcp_sendmsg_ent_handler);			// Sent data
-	register_probe(&probes[i++], "tcp_recvmsg", &tcp_recvmsg_ret_handler, &tcp_recvmsg_ent_handler); 	// Received data boundary
-	register_probe(&probes[i++], "skb_copy_datagram_iter", NULL, &skb_copy_datagram_iter_ent_handler);  // Received data
+	register_probe(&probes[i++], "tcp_connect", NULL, &tcp_connect_ent_handler);					// !SYN (sent)
+	register_probe(&probes[i++], "tcp_make_synack", NULL, &tcp_make_synack_ent_handler);			// SYN (recv)
+	register_probe(&probes[i++], "tcp_v4_init_seq", &tcp_v4_init_seq_ret_handler, NULL);			// !ACK (sent)
+	register_probe(&probes[i++], "tcp_send_ack", NULL, &tcp_send_ack_ent_handler);					// !ACK (recv)
+
+	// Got all the data
+	register_probe(&probes[i++], "tcp_sendmsg", NULL, &tcp_sendmsg_ent_handler);						// !DATA: Sent
+	register_probe(&probes[i++], "tcp_recvmsg", &tcp_recvmsg_ret_handler, &tcp_recvmsg_ent_handler); 	// !DATA: Received data boundary
+	register_probe(&probes[i++], "skb_copy_datagram_iter", NULL, &skb_copy_datagram_iter_ent_handler);  // !DATA: Recv
 	return 0;
 }
 
