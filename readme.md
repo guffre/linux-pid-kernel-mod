@@ -3,10 +3,9 @@ This project was born from a little curiousity on what control I can exert over 
 After some digging, I wrote this kernel module that influences how many PIDs are allowed to be allocated and used.
 
 # Compilation
-todo
-
-# Sample
-todo
+```
+make
+```
 
 # fork and getting a pid
 
